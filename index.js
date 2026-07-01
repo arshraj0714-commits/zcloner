@@ -23,7 +23,6 @@ const userClient = new UserClient({
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const DC_TOKEN = process.env.DC_TOKEN || null;
-// Use a mutable variable so we can set it dynamically via command
 let ALLOWED_ID = process.env.ALLOWED_ID || null;
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -45,7 +44,6 @@ bot.once('ready', () => {
     console.log(purple + `Bot logged in as ${bot.user.tag}` + reset);
 });
 
-// Attempt to log in the user client if DC_TOKEN is provided in .env
 if (DC_TOKEN) {
     userClient.login(DC_TOKEN).then(() => {
         console.log(purple + `User Client logged in from ENV as ${userClient.user.tag}` + reset);
@@ -65,37 +63,27 @@ userClient.on('ready', () => {
 bot.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // ==================== OWNER SETUP LOGIC ====================
-    // If ALLOWED_ID is not set, only allow the !setid command so an admin can claim the bot
     if (!ALLOWED_ID) {
         if (message.content.toLowerCase().startsWith('!setid')) {
-            // Must be run in a server so we can check permissions
             if (!message.guild) return message.reply("Please run this command in a server.");
-            
-            // Check if the user is an Administrator
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
                 return message.reply("❌ You must have **Administrator** permissions to claim this bot.");
             }
-
-            // Set the allowed ID to the admin who ran the command
             ALLOWED_ID = message.author.id;
-            await message.reply(`✅ <@${ALLOWED_ID}> has been claimed as the bot owner! You can now use all commands.\n*(Note: If the bot restarts, you will need to set ALLOWED_ID in Railway env vars to keep it permanent).*`);
+            await message.reply(`✅ <@${ALLOWED_ID}> has been claimed as the bot owner! You can now use all commands.`);
         } else {
-            // If they try to run anything else, tell them how to set it up
             if (message.content.startsWith('!')) {
                 return message.reply("⚠️ Bot owner not set. An Administrator must use `!setid` to claim the bot first.");
             }
         }
-        return; // Stop processing until owner is set
+        return;
     }
 
-    // If ALLOWED_ID IS set, enforce it strictly
     if (message.author.id !== ALLOWED_ID) return;
 
     const args = message.content.trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // ==================== HELP COMMAND ====================
     if (command === '!help') {
         const helpEmbed = new EmbedBuilder()
             .setTitle("Z Cloner - Commands")
@@ -111,7 +99,6 @@ bot.on('messageCreate', async (message) => {
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
-    // ==================== SETTOKEN COMMAND ====================
     if (command === '!settoken') {
         if (userClient.isReady()) {
             return message.reply("✅ User client is already logged in! No need to set a token.");
@@ -124,7 +111,6 @@ bot.on('messageCreate', async (message) => {
 
         try {
             await userClient.login(token);
-            // Try to delete the user's message containing the token for security
             if (message.deletable) await message.delete().catch(() => { });
             await message.author.send("✅ **Z Cloner:** User Client successfully logged in as `" + userClient.user.tag + "`");
             await message.channel.send("✅ User client logged in! Check your DMs. (Your message containing the token was deleted for security).");
@@ -133,7 +119,6 @@ bot.on('messageCreate', async (message) => {
         }
     }
 
-    // ==================== CLONE COMMAND ====================
     if (command === '!clone') {
         if (!userClient.isReady()) {
             const missingTokenEmbed = new EmbedBuilder()
@@ -186,10 +171,11 @@ bot.on('messageCreate', async (message) => {
                 `**3.** Delete Emojis\n` +
                 `**4.** Clone Channels\n` +
                 `**5.** Clone Roles\n` +
-                `**6.** Clone Emojis`)
+                `**6.** Clone Emojis\n` +
+                `**7.** Clone Messages (Last 100 per channel)`)
             .setColor('#800080');
 
-        let options = { 1: false, 2: false, 3: false, 4: false, 5: false, 6: false };
+        let options = { 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 7: false };
 
         const createRow = (startIndex, endIndex) => {
             const row = new ActionRowBuilder();
@@ -209,6 +195,7 @@ bot.on('messageCreate', async (message) => {
             .addComponents(
                 new ButtonBuilder().setCustomId('opt_5').setLabel('5').setStyle(options[5] ? ButtonStyle.Success : ButtonStyle.Danger),
                 new ButtonBuilder().setCustomId('opt_6').setLabel('6').setStyle(options[6] ? ButtonStyle.Success : ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId('opt_7').setLabel('7').setStyle(options[7] ? ButtonStyle.Success : ButtonStyle.Danger),
                 new ButtonBuilder().setCustomId('start_clone').setLabel('Start Cloning').setStyle(ButtonStyle.Primary)
             );
 
@@ -229,6 +216,7 @@ bot.on('messageCreate', async (message) => {
                     .addComponents(
                         new ButtonBuilder().setCustomId('opt_5').setLabel('5').setStyle(options[5] ? ButtonStyle.Success : ButtonStyle.Danger),
                         new ButtonBuilder().setCustomId('opt_6').setLabel('6').setStyle(options[6] ? ButtonStyle.Success : ButtonStyle.Danger),
+                        new ButtonBuilder().setCustomId('opt_7').setLabel('7').setStyle(options[7] ? ButtonStyle.Success : ButtonStyle.Danger),
                         new ButtonBuilder().setCustomId('start_clone').setLabel('Start Cloning').setStyle(ButtonStyle.Primary)
                     );
 
@@ -318,6 +306,7 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
     await sendLog("Cleanup complete. Starting cloning...");
 
     const roleMapping = new Map();
+    const channelMapping = new Map();
 
     if (opts[5]) {
         const targetEveryone = targetGuild.roles.everyone;
@@ -366,7 +355,7 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
         return newOverwrites;
     };
 
-    if (opts[4]) {
+    if (opts[4] || opts[7]) {
         const categoryMapping = new Map();
 
         const categories = Array.from(sourceGuild.channels.cache.values())
@@ -396,7 +385,7 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
         for (const channel of textChannels) {
             try {
                 const parentId = channel.parentId ? categoryMapping.get(channel.parentId) : null;
-                await targetGuild.channels.create({
+                const newChannel = await targetGuild.channels.create({
                     name: channel.name,
                     type: 0,
                     parent: parentId,
@@ -405,6 +394,7 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
                     position: channel.position,
                     permissionOverwrites: mapOverwrites(channel.permissionOverwrites.cache)
                 });
+                channelMapping.set(channel.id, newChannel.id);
                 await sendLog(`Created Text Channel: ${channel.name}`);
                 await delay(1500);
             } catch (e) {
@@ -419,7 +409,7 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
         for (const channel of voiceChannels) {
             try {
                 const parentId = channel.parentId ? categoryMapping.get(channel.parentId) : null;
-                await targetGuild.channels.create({
+                const newChannel = await targetGuild.channels.create({
                     name: channel.name,
                     type: 2,
                     parent: parentId,
@@ -428,6 +418,7 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
                     position: channel.position,
                     permissionOverwrites: mapOverwrites(channel.permissionOverwrites.cache)
                 });
+                channelMapping.set(channel.id, newChannel.id);
                 await sendLog(`Created Voice Channel: ${channel.name}`);
                 await delay(1500);
             } catch (e) {
@@ -475,6 +466,57 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
                     }
                     await sendLog(`⚠️ Failed to copy emoji: ${emoji.name}`);
                 }
+            }
+        }
+    }
+
+    if (opts[7]) {
+        await sendLog("📋 Starting message cloning (Last 100 per channel)... This may take a while.");
+        
+        const sourceTextChannels = Array.from(sourceGuild.channels.cache.values())
+            .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0 || ch.type === 'GUILD_NEWS' || ch.type === 5);
+
+        for (const sourceChannel of sourceTextChannels) {
+            const targetChannelId = channelMapping.get(sourceChannel.id);
+            if (!targetChannelId) continue;
+
+            const targetChannel = await bot.channels.fetch(targetChannelId).catch(() => null);
+            if (!targetChannel) continue;
+
+            try {
+                const webhook = await targetChannel.createWebhook({
+                    name: 'Z Cloner',
+                    reason: 'Cloning messages'
+                });
+
+                const messages = await sourceChannel.messages.fetch({ limit: 100 });
+                const sortedMessages = Array.from(messages.values()).reverse(); // Send oldest first
+
+                for (const msg of sortedMessages) {
+                    if (msg.system) continue; // Skip join/pin system messages
+
+                    const webhookPayload = {
+                        username: msg.author.username,
+                        avatarURL: msg.author.displayAvatarURL({ extension: 'png', size: 1024 }),
+                        content: msg.content || '',
+                        embeds: msg.embeds || []
+                    };
+
+                    if (msg.attachments.size > 0) {
+                        webhookPayload.files = msg.attachments.map(att => att.url);
+                    }
+
+                    // Skip if message is completely empty (rare but possible)
+                    if (!webhookPayload.content && webhookPayload.files.length === 0 && webhookPayload.embeds.length === 0) continue;
+
+                    await webhook.send(webhookPayload).catch(() => {});
+                    await delay(750); // Prevent webhooks rate limits
+                }
+
+                await sendLog(`💬 Cloned messages in: ${sourceChannel.name}`);
+                await delay(1500); 
+            } catch (e) {
+                await sendLog(`⚠️ Failed to clone messages in ${sourceChannel.name}: ${e.message}`);
             }
         }
     }
