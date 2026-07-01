@@ -1,0 +1,19 @@
+{
+  "name": "z-cloner",
+  "version": "1.0.0",
+  "description": "Z Cloner - Discord Server Cloner Bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20.18.0"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "debug": "^4.4.3",
+    "discord.js": "^14.25.1",
+    "discord.js-selfbot-v13": "^3.7.1",
+    "dotenv": "^17.3.1"
+  }
+}
