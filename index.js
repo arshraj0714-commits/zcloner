@@ -172,7 +172,7 @@ bot.on('messageCreate', async (message) => {
                 `**4.** Clone Channels\n` +
                 `**5.** Clone Roles\n` +
                 `**6.** Clone Emojis\n` +
-                `**7.** Clone Messages (Last 100 per channel)`)
+                `**7.** Clone Messages (All Messages - May take a long time)`)
             .setColor('#800080');
 
         let options = { 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 7: false };
@@ -471,7 +471,7 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
     }
 
     if (opts[7]) {
-        await sendLog("📋 Starting message cloning (Last 100 per channel)... This may take a while.");
+        await sendLog("📋 Starting message cloning (ALL messages)... This may take a VERY long time depending on server size.");
         
         const sourceTextChannels = Array.from(sourceGuild.channels.cache.values())
             .filter(ch => ch.type === 'GUILD_TEXT' || ch.type === 0 || ch.type === 'GUILD_NEWS' || ch.type === 5);
@@ -489,34 +489,63 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
                     reason: 'Cloning messages'
                 });
 
-                const messages = await sourceChannel.messages.fetch({ limit: 100 });
-                const sortedMessages = Array.from(messages.values()).reverse(); // Send oldest first
+                let totalMessagesCloned = 0;
 
-                for (const msg of sortedMessages) {
-                    if (msg.system) continue; // Skip join/pin system messages
-
-                    const webhookPayload = {
-                        username: msg.author.username,
-                        avatarURL: msg.author.displayAvatarURL({ extension: 'png', size: 1024 }),
-                        content: msg.content || '',
-                        embeds: msg.embeds || []
-                    };
-
-                    if (msg.attachments.size > 0) {
-                        webhookPayload.files = msg.attachments.map(att => att.url);
-                    }
-
-                    // Skip if message is completely empty (rare but possible)
-                    if (!webhookPayload.content && webhookPayload.files.length === 0 && webhookPayload.embeds.length === 0) continue;
-
-                    await webhook.send(webhookPayload).catch(() => {});
-                    await delay(750); // Prevent webhooks rate limits
+                // Step 1: Find the very first (oldest) message ID in the source channel to start from the beginning
+                await sendLog(`🔍 Scanning #${sourceChannel.name} to find start of history...`);
+                let oldestId = undefined;
+                while (true) {
+                    const batch = await sourceChannel.messages.fetch({ limit: 100, before: oldestId });
+                    if (batch.size === 0) break;
+                    oldestId = batch.last().id;
+                    await delay(1000); // Prevent selfbot rate limit during scan
                 }
 
-                await sendLog(`💬 Cloned messages in: ${sourceChannel.name}`);
-                await delay(1500); 
+                if (!oldestId) {
+                    await sendLog(`ℹ️ No messages found in #${sourceChannel.name}. Skipping.`);
+                    continue;
+                }
+
+                // Step 2: Fetch and send chronologically using the 'after' cursor
+                await sendLog(`⏳ Cloning messages in #${sourceChannel.name}...`);
+                let cursorId = oldestId;
+                
+                while (true) {
+                    const batch = await sourceChannel.messages.fetch({ limit: 100, after: cursorId });
+                    if (batch.size === 0) break; // Reached the end of the channel
+
+                    // Sort batch oldest to newest to maintain conversation flow
+                    const sortedMessages = Array.from(batch.values()).sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+                    for (const msg of sortedMessages) {
+                        if (msg.system) continue; // Skip join/pin system messages
+
+                        const webhookPayload = {
+                            username: msg.author.username,
+                            avatarURL: msg.author.displayAvatarURL({ extension: 'png', size: 1024 }),
+                            content: msg.content || '',
+                            embeds: msg.embeds || []
+                        };
+
+                        if (msg.attachments.size > 0) {
+                            webhookPayload.files = msg.attachments.map(att => ({ attachment: att.url, name: att.name }));
+                        }
+
+                        if (!webhookPayload.content && (!webhookPayload.files || webhookPayload.files.length === 0) && webhookPayload.embeds.length === 0) continue;
+
+                        await webhook.send(webhookPayload).catch(() => {});
+                        await delay(500); // Webhook rate limit safety
+                    }
+
+                    totalMessagesCloned += sortedMessages.length;
+                    cursorId = sortedMessages[sortedMessages.length - 1].id; // Update cursor to newest in this batch
+                    await delay(1000); // Delay between fetch batches
+                }
+
+                await sendLog(`✅ Cloned ${totalMessagesCloned} messages in #${sourceChannel.name}`);
+                await delay(2000); 
             } catch (e) {
-                await sendLog(`⚠️ Failed to clone messages in ${sourceChannel.name}: ${e.message}`);
+                await sendLog(`⚠️ Failed to fully clone messages in #${sourceChannel.name}: ${e.message}`);
             }
         }
     }
