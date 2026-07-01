@@ -172,10 +172,11 @@ bot.on('messageCreate', async (message) => {
                 `**4.** Clone Channels\n` +
                 `**5.** Clone Roles\n` +
                 `**6.** Clone Emojis\n` +
-                `**7.** Clone Messages (All Messages - May take a long time)`)
+                `**7.** Clone Messages (All Messages)\n` +
+                `**8.** Clone Server Info (Name & Icon)`)
             .setColor('#800080');
 
-        let options = { 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 7: false };
+        let options = { 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 7: false, 8: false };
 
         const createRow = (startIndex, endIndex) => {
             const row = new ActionRowBuilder();
@@ -196,6 +197,7 @@ bot.on('messageCreate', async (message) => {
                 new ButtonBuilder().setCustomId('opt_5').setLabel('5').setStyle(options[5] ? ButtonStyle.Success : ButtonStyle.Danger),
                 new ButtonBuilder().setCustomId('opt_6').setLabel('6').setStyle(options[6] ? ButtonStyle.Success : ButtonStyle.Danger),
                 new ButtonBuilder().setCustomId('opt_7').setLabel('7').setStyle(options[7] ? ButtonStyle.Success : ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId('opt_8').setLabel('8').setStyle(options[8] ? ButtonStyle.Success : ButtonStyle.Danger),
                 new ButtonBuilder().setCustomId('start_clone').setLabel('Start Cloning').setStyle(ButtonStyle.Primary)
             );
 
@@ -217,6 +219,7 @@ bot.on('messageCreate', async (message) => {
                         new ButtonBuilder().setCustomId('opt_5').setLabel('5').setStyle(options[5] ? ButtonStyle.Success : ButtonStyle.Danger),
                         new ButtonBuilder().setCustomId('opt_6').setLabel('6').setStyle(options[6] ? ButtonStyle.Success : ButtonStyle.Danger),
                         new ButtonBuilder().setCustomId('opt_7').setLabel('7').setStyle(options[7] ? ButtonStyle.Success : ButtonStyle.Danger),
+                        new ButtonBuilder().setCustomId('opt_8').setLabel('8').setStyle(options[8] ? ButtonStyle.Success : ButtonStyle.Danger),
                         new ButtonBuilder().setCustomId('start_clone').setLabel('Start Cloning').setStyle(ButtonStyle.Primary)
                     );
 
@@ -304,6 +307,29 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
     }
 
     await sendLog("Cleanup complete. Starting cloning...");
+
+    // ========== CLONE SERVER INFO (NAME & ICON) ==========
+    if (opts[8]) {
+        try {
+            await sendLog("⚙️ Cloning Server Info (Name & Icon)...");
+            const iconURL = sourceGuild.iconURL({ extension: 'png', size: 1024 });
+            const editPayload = { name: sourceGuild.name };
+            
+            if (iconURL) {
+                // Fetch the image and convert to base64 so Discord accepts it
+                const response = await fetch(iconURL);
+                const buffer = await response.arrayBuffer();
+                const base64Icon = Buffer.from(buffer).toString('base64');
+                editPayload.icon = `data:image/png;base64,${base64Icon}`;
+            }
+            
+            await targetGuild.edit(editPayload);
+            await sendLog(`✅ Server name and icon updated to match ${sourceGuild.name}!`);
+            await delay(1500);
+        } catch (e) {
+            await sendLog(`⚠️ Failed to clone server info: ${e.message}`);
+        }
+    }
 
     const roleMapping = new Map();
     const channelMapping = new Map();
@@ -491,14 +517,13 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
 
                 let totalMessagesCloned = 0;
 
-                // Step 1: Find the very first (oldest) message ID in the source channel to start from the beginning
                 await sendLog(`🔍 Scanning #${sourceChannel.name} to find start of history...`);
                 let oldestId = undefined;
                 while (true) {
                     const batch = await sourceChannel.messages.fetch({ limit: 100, before: oldestId });
                     if (batch.size === 0) break;
                     oldestId = batch.last().id;
-                    await delay(1000); // Prevent selfbot rate limit during scan
+                    await delay(1000);
                 }
 
                 if (!oldestId) {
@@ -506,19 +531,17 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
                     continue;
                 }
 
-                // Step 2: Fetch and send chronologically using the 'after' cursor
                 await sendLog(`⏳ Cloning messages in #${sourceChannel.name}...`);
                 let cursorId = oldestId;
                 
                 while (true) {
                     const batch = await sourceChannel.messages.fetch({ limit: 100, after: cursorId });
-                    if (batch.size === 0) break; // Reached the end of the channel
+                    if (batch.size === 0) break;
 
-                    // Sort batch oldest to newest to maintain conversation flow
                     const sortedMessages = Array.from(batch.values()).sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
                     for (const msg of sortedMessages) {
-                        if (msg.system) continue; // Skip join/pin system messages
+                        if (msg.system) continue;
 
                         const webhookPayload = {
                             username: msg.author.username,
@@ -534,12 +557,12 @@ async function startCloningProcess(message, sourceGuild, targetGuild, opts) {
                         if (!webhookPayload.content && (!webhookPayload.files || webhookPayload.files.length === 0) && webhookPayload.embeds.length === 0) continue;
 
                         await webhook.send(webhookPayload).catch(() => {});
-                        await delay(500); // Webhook rate limit safety
+                        await delay(500);
                     }
 
                     totalMessagesCloned += sortedMessages.length;
-                    cursorId = sortedMessages[sortedMessages.length - 1].id; // Update cursor to newest in this batch
-                    await delay(1000); // Delay between fetch batches
+                    cursorId = sortedMessages[sortedMessages.length - 1].id;
+                    await delay(1000);
                 }
 
                 await sendLog(`✅ Cloned ${totalMessagesCloned} messages in #${sourceChannel.name}`);
